@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 )
 
 const (
@@ -22,7 +21,6 @@ type IAPClient interface {
 
 // Client implements IAPClient
 type Client struct {
-	URL        string
 	HttpClient *http.Client
 }
 
@@ -72,11 +70,7 @@ func HandleError(status int) error {
 // New creates a client object
 func New(httpClient *http.Client) Client {
 	client := Client{
-		URL:        SandboxURL,
 		HttpClient: httpClient,
-	}
-	if os.Getenv("IAP_ENVIRONMENT") == "production" {
-		client.URL = ProductionURL
 	}
 	return client
 }
@@ -86,13 +80,29 @@ func (c *Client) Verify(req IAPRequest, result interface{}) error {
 	b := new(bytes.Buffer)
 	json.NewEncoder(b).Encode(req)
 
-	resp, err := c.HttpClient.Post(c.URL, "application/json; charset=utf-8", b)
+	resp, err := c.HttpClient.Post(ProductionURL, "application/json; charset=utf-8", b)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
 	err = json.NewDecoder(resp.Body).Decode(result)
+	if err != nil {
+		return err
+	}
+	r, ok := result.(*HttpStatusResponse)
+
+	if ok && r.Status == 21007 {
+		b = new(bytes.Buffer)
+		json.NewEncoder(b).Encode(req)
+		resp, err := c.HttpClient.Post(SandboxURL, "application/json; charset=utf-8", b)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		return json.NewDecoder(resp.Body).Decode(result)
+	}
 
 	return err
 }
