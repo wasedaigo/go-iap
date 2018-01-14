@@ -2,10 +2,9 @@ package appstore
 
 import (
 	"errors"
-	"os"
+	"net/http"
 	"reflect"
 	"testing"
-	"time"
 )
 
 func TestHandleError(t *testing.T) {
@@ -90,79 +89,22 @@ func TestHandleError(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	expected := Client{
-		URL:     "https://sandbox.itunes.apple.com/verifyReceipt",
-		TimeOut: time.Second * 5,
-	}
+	httpClient := http.Client{}
 
-	actual := New()
-	if !reflect.DeepEqual(actual, expected) {
-		t.Errorf("got %v\nwant %v", actual, expected)
+	actual := New(&httpClient)
+	if actual.HttpClient != &httpClient {
+		t.Errorf("got %v\nwant %v", actual.HttpClient, &httpClient)
 	}
 }
 
-func TestNewWithEnvironment(t *testing.T) {
-	expected := Client{
-		URL:     "https://buy.itunes.apple.com/verifyReceipt",
-		TimeOut: time.Second * 5,
-	}
-
-	os.Setenv("IAP_ENVIRONMENT", "production")
-	actual := New()
-	os.Clearenv()
-
-	if !reflect.DeepEqual(actual, expected) {
-		t.Errorf("got %v\nwant %v", actual, expected)
-	}
-}
-
-func TestNewWithConfig(t *testing.T) {
-	config := Config{
-		IsProduction: true,
-		TimeOut:      time.Second * 2,
-	}
-
-	expected := Client{
-		URL:     "https://buy.itunes.apple.com/verifyReceipt",
-		TimeOut: time.Second * 2,
-	}
-
-	actual := NewWithConfig(config)
-	if !reflect.DeepEqual(actual, expected) {
-		t.Errorf("got %v\nwant %v", actual, expected)
-	}
-}
-
-func TestNewWithConfigTimeout(t *testing.T) {
-	config := Config{
-		IsProduction: true,
-	}
-
-	expected := Client{
-		URL:     "https://buy.itunes.apple.com/verifyReceipt",
-		TimeOut: time.Second * 5,
-	}
-
-	actual := NewWithConfig(config)
-	if !reflect.DeepEqual(actual, expected) {
-		t.Errorf("got %v\nwant %v", actual, expected)
-	}
-}
-
-func TestVerify(t *testing.T) {
-	client := New()
-	client.TimeOut = time.Millisecond * 100
+func TestVerifyInvalidReceipt(t *testing.T) {
+	httpClient := http.Client{}
+	client := New(&httpClient)
 
 	req := IAPRequest{
 		ReceiptData: "dummy data",
 	}
 	result := &IAPResponse{}
-	err := client.Verify(req, result)
-	if err == nil {
-		t.Errorf("error should be occurred because of timeout")
-	}
-
-	client = New()
 	expected := &IAPResponse{
 		Status: 21002,
 	}

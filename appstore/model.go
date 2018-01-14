@@ -112,4 +112,8 @@ type (
 		PendingRenewalInfo []PendingRenewalInfo `json:"pending_renewal_info"`
 		IsRetryable        bool                 `json:"is-retryable"`
 	}
+
+	HttpStatusResponse struct {
+		Status int `json:"status"`
+	}
 )
