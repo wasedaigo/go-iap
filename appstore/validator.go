@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io/ioutil"
 	"net/http"
 )
 
@@ -21,7 +22,9 @@ type IAPClient interface {
 
 // Client implements IAPClient
 type Client struct {
-	HttpClient *http.Client
+	ProductionURL string
+	SandboxURL    string
+	HttpClient    *http.Client
 }
 
 // HandleError returns error message by status code
@@ -70,7 +73,9 @@ func HandleError(status int) error {
 // New creates a client object
 func New(httpClient *http.Client) Client {
 	client := Client{
-		HttpClient: httpClient,
+		ProductionURL: ProductionURL,
+		SandboxURL:    SandboxURL,
+		HttpClient:    httpClient,
 	}
 	return client
 }
@@ -80,22 +85,36 @@ func (c *Client) Verify(req IAPRequest, result interface{}) error {
 	b := new(bytes.Buffer)
 	json.NewEncoder(b).Encode(req)
 
-	resp, err := c.HttpClient.Post(ProductionURL, "application/json; charset=utf-8", b)
+	resp, err := c.HttpClient.Post(c.ProductionURL, "application/json; charset=utf-8", b)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	return c.parseResponse(resp, result, c.HttpClient, req)
+}
 
-	err = json.NewDecoder(resp.Body).Decode(result)
+func (c *Client) parseResponse(resp *http.Response, result interface{}, client *http.Client, req IAPRequest) error {
+	// Read the body now so that we can unmarshal it twice
+	buf, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
-	r, ok := result.(*HttpStatusResponse)
 
-	if ok && r.Status == 21007 {
-		b = new(bytes.Buffer)
+	err = json.Unmarshal(buf, &result)
+	if err != nil {
+		return err
+	}
+
+	// https://developer.apple.com/library/content/technotes/tn2413/_index.html#//apple_ref/doc/uid/DTS40016228-CH1-RECEIPTURL
+	var r StatusResponse
+	err = json.Unmarshal(buf, &r)
+	if err != nil {
+		return err
+	}
+	if r.Status == 21007 {
+		b := new(bytes.Buffer)
 		json.NewEncoder(b).Encode(req)
-		resp, err := c.HttpClient.Post(SandboxURL, "application/json; charset=utf-8", b)
+		resp, err := client.Post(c.SandboxURL, "application/json; charset=utf-8", b)
 		if err != nil {
 			return err
 		}
@@ -104,5 +123,5 @@ func (c *Client) Verify(req IAPRequest, result interface{}) error {
 		return json.NewDecoder(resp.Body).Decode(result)
 	}
 
-	return err
+	return nil
 }

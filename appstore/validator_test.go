@@ -2,8 +2,11 @@ package appstore
 
 import (
 	"errors"
+	"io/ioutil"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -97,19 +100,149 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestVerifyInvalidReceipt(t *testing.T) {
+func TestVerifyBadURL(t *testing.T) {
 	httpClient := http.Client{}
 	client := New(&httpClient)
+	client.ProductionURL = "127.0.0.1"
 
 	req := IAPRequest{
 		ReceiptData: "dummy data",
 	}
 	result := &IAPResponse{}
+	err := client.Verify(req, result)
+	if err == nil {
+		t.Errorf("error should be occurred because the server is not real")
+	}
+}
+
+func TestVerifyBadPayload(t *testing.T) {
+	s := httptest.NewServer(serverWithResponse(http.StatusBadRequest, `{"status": 21002}`))
+	defer s.Close()
+
+	httpClient := http.Client{}
+	client := New(&httpClient)
+	client.ProductionURL = s.URL
+
 	expected := &IAPResponse{
 		Status: 21002,
 	}
-	client.Verify(req, result)
+	req := IAPRequest{
+		ReceiptData: "dummy data",
+	}
+	result := &IAPResponse{}
+
+	err := client.Verify(req, result)
+	if err != nil {
+		t.Errorf("got error %s", err)
+	}
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("got %v\nwant %v", result, expected)
 	}
+}
+
+func TestVerifyBadResponse(t *testing.T) {
+	s := httptest.NewServer(serverWithResponse(http.StatusInternalServerError, `qwerty!@#$%^`))
+	defer s.Close()
+
+	httpClient := http.Client{}
+	client := New(&httpClient)
+	client.ProductionURL = s.URL
+	req := IAPRequest{
+		ReceiptData: "dummy data",
+	}
+	result := &IAPResponse{}
+
+	err := client.Verify(req, result)
+	if err == nil {
+		t.Errorf("expected an error because Verify could not unmarshal server response")
+	}
+}
+
+func TestVerifySandboxReceipt(t *testing.T) {
+	s := httptest.NewServer(serverWithResponse(http.StatusOK, `{"status": 21007}`))
+	defer s.Close()
+
+	sandboxServ := httptest.NewServer(serverWithResponse(http.StatusOK, `{"status": 0}`))
+	defer sandboxServ.Close()
+
+	httpClient := http.Client{}
+	client := New(&httpClient)
+	client.ProductionURL = s.URL
+	client.SandboxURL = sandboxServ.URL
+
+	expected := &IAPResponse{
+		Status: 0,
+	}
+	req := IAPRequest{
+		ReceiptData: "dummy data",
+	}
+	result := &IAPResponse{}
+
+	err := client.Verify(req, result)
+	if err != nil {
+		t.Errorf("got error %s", err)
+	}
+	if !reflect.DeepEqual(result, expected) {
+		t.Errorf("got %v\nwant %v", result, expected)
+	}
+}
+
+func TestVerifySandboxReceiptFailure(t *testing.T) {
+	s := httptest.NewServer(serverWithResponse(http.StatusOK, `{"status": 21007}`))
+	defer s.Close()
+
+	httpClient := http.Client{}
+	client := New(&httpClient)
+	client.ProductionURL = s.URL
+	client.SandboxURL = "localhost"
+
+	req := IAPRequest{
+		ReceiptData: "dummy data",
+	}
+	result := &IAPResponse{}
+
+	err := client.Verify(req, result)
+	if err == nil {
+		t.Errorf("expected error to be not nil since the sandbox is not responding")
+	}
+}
+
+func TestCannotReadBody(t *testing.T) {
+	httpClient := http.Client{}
+	client := New(&httpClient)
+	testResponse := http.Response{Body: ioutil.NopCloser(errReader(0))}
+
+	if client.parseResponse(&testResponse, IAPResponse{}, &http.Client{}, IAPRequest{}) == nil {
+		t.Errorf("expected redirectToSandbox to fail to read the body")
+	}
+}
+
+func TestCannotUnmarshalBody(t *testing.T) {
+	httpClient := http.Client{}
+	client := New(&httpClient)
+	testResponse := http.Response{Body: ioutil.NopCloser(strings.NewReader(`{"status": true}`))}
+
+	if client.parseResponse(&testResponse, StatusResponse{}, &http.Client{}, IAPRequest{}) == nil {
+		t.Errorf("expected redirectToSandbox to fail to unmarshal the data")
+	}
+}
+
+type errReader int
+
+func (errReader) Read(p []byte) (n int, err error) {
+	return 0, errors.New("test error")
+}
+
+func serverWithResponse(statusCode int, response string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if "POST" == r.Method {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(response))
+			return
+		} else {
+			w.Write([]byte(`unsupported request`))
+		}
+
+		w.WriteHeader(statusCode)
+	})
 }
